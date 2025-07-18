@@ -22,6 +22,24 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
 });
 
+// Debug route to check if updated code is deployed
+app.get('/api/debug', async (req, res) => {
+  try {
+    await prisma.$connect();
+    res.json({ 
+      database: 'connected', 
+      timestamp: new Date().toISOString(),
+      routes: 'loaded'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      database: 'failed', 
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({ message: 'Divimate Backend API', status: 'running' });
 });
@@ -48,7 +66,7 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-app.post('/users/login', async (req, res) => {
+app.post('/api/users/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await prisma.user.findUnique({ where: { email } });
@@ -67,7 +85,7 @@ app.post('/users/login', async (req, res) => {
   }
 });
 
-app.get('/users', async (req, res) => {
+app.get('/api/users', async (req, res) => {
   try {
     const users = await prisma.user.findMany();
     res.json(users);
@@ -79,7 +97,7 @@ app.get('/users', async (req, res) => {
 
 // ---------------------- GROUP ROUTES ---------------------- //
 
-app.post('/groups', async (req, res) => {
+app.post('/api/groups', async (req, res) => {
   try {
     const { name, userIds } = req.body;
     const group = await prisma.group.create({
@@ -96,7 +114,7 @@ app.post('/groups', async (req, res) => {
   }
 });
 
-app.post('/groups/:groupId/add-member', async (req, res) => {
+app.post('/api/groups/:groupId/add-member', async (req, res) => {
   try {
     const groupId = parseInt(req.params.groupId);
     const { userId } = req.body;
@@ -117,7 +135,7 @@ app.post('/groups/:groupId/add-member', async (req, res) => {
   }
 });
 
-app.post('/groups/:groupId/expenses', async (req, res) => {
+app.post('/api/groups/:groupId/expenses', async (req, res) => {
   try {
     const groupId = parseInt(req.params.groupId);
     const { description, amount, paidById } = req.body;
@@ -131,7 +149,7 @@ app.post('/groups/:groupId/expenses', async (req, res) => {
   }
 });
 
-app.get('/groups', async (req, res) => {
+app.get('/api/groups', async (req, res) => {
   try {
     const { userId } = req.query;
     let groups = [];
@@ -164,7 +182,7 @@ app.get('/groups', async (req, res) => {
   }
 });
 
-app.get('/groups/:groupId/summary', async (req, res) => {
+app.get('/api/groups/:groupId/summary', async (req, res) => {
   try {
     const groupId = parseInt(req.params.groupId);
     const group = await prisma.group.findUnique({
@@ -249,6 +267,38 @@ app.get('/groups/:groupId/summary', async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT || 4000, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${process.env.PORT || 4000}`);
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
 });
+
+// Handle 404 for unmatched routes
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Shutting down gracefully...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+// Start server
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
+});
+
+// Handle server errors
+server.on('error', (err) => {
+  console.error('Server error:', err);
+});
+
+module.exports = app;
