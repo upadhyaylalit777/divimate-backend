@@ -22,31 +22,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
 });
 
-// Debug route to check if updated code is deployed
-app.get('/api/debug', async (req, res) => {
-  try {
-    // Debug environment variables
-    const dbUrl = process.env.DATABASE_URL;
-    console.log('DATABASE_URL:', dbUrl ? `${dbUrl.substring(0, 20)}...` : 'undefined');
-    
-    await prisma.$connect();
-    res.json({ 
-      database: 'connected', 
-      timestamp: new Date().toISOString(),
-      routes: 'loaded',
-      dbUrlPrefix: dbUrl ? dbUrl.substring(0, 10) : 'undefined'
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      database: 'failed', 
-      error: error.message,
-      timestamp: new Date().toISOString(),
-      dbUrlPrefix: process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 10) : 'undefined',
-      allEnvVars: Object.keys(process.env).filter(key => key.includes('DATABASE'))
-    });
-  }
-});
-
 app.get('/', (req, res) => {
   res.json({ message: 'Divimate Backend API', status: 'running' });
 });
