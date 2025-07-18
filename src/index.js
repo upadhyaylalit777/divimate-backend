@@ -96,6 +96,99 @@ app.post('/api/groups', async (req, res) => {
   }
 });
 
+// FIXED: Updated endpoint to match frontend expectations
+app.post('/api/groups/:groupId/members', async (req, res) => {
+  try {
+    const groupId = parseInt(req.params.groupId);
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID is required.' });
+    }
+
+    // Check if group exists
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      include: { members: { include: { user: true } } }
+    });
+
+    if (!group) {
+      return res.status(404).json({ error: 'Group not found.' });
+    }
+
+    // Check if user is already a member
+    const existingMember = group.members.find(member => member.user.id === parseInt(userId));
+
+    if (existingMember) {
+      return res.status(400).json({ error: 'User is already a member of this group.' });
+    }
+
+    // Add the member using the same structure as your existing code
+    await prisma.group.update({
+      where: { id: groupId },
+      data: {
+        members: { create: { user: { connect: { id: parseInt(userId) } } } },
+      },
+    });
+
+    res.json({ message: 'Member added successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// NEW: Remove member endpoint
+app.delete('/api/groups/:groupId/members/:userId', async (req, res) => {
+  try {
+    const groupId = parseInt(req.params.groupId);
+    const userId = parseInt(req.params.userId);
+
+    // Get the group with members
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      include: { 
+        members: { include: { user: true } },
+        expenses: true 
+      }
+    });
+
+    if (!group) {
+      return res.status(404).json({ error: 'Group not found.' });
+    }
+
+    // Check if user is a member
+    const memberToRemove = group.members.find(member => member.user.id === userId);
+
+    if (!memberToRemove) {
+      return res.status(404).json({ error: 'User is not a member of this group.' });
+    }
+
+    // Check if user has any expenses in this group
+    const userExpenses = group.expenses.filter(expense => expense.paidById === userId);
+
+    if (userExpenses.length > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot remove user who has expenses in this group. Please settle all expenses first.' 
+      });
+    }
+
+    // Remove the member using the member's ID
+    await prisma.group.update({
+      where: { id: groupId },
+      data: {
+        members: { delete: { id: memberToRemove.id } }
+      }
+    });
+
+    res.json({ message: 'Member removed successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Keep the old endpoint for backwards compatibility
 app.post('/api/groups/:groupId/add-member', async (req, res) => {
   try {
     const groupId = parseInt(req.params.groupId);
