@@ -16,6 +16,33 @@ app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret_key';
 const PORT = process.env.PORT || 4000;
 
+// ---------------------- MIDDLEWARE ---------------------- //
+
+// JWT verification middleware (optional - for protected routes)
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    // Allow requests without token for now (backward compatibility)
+    req.user = null;
+    return next();
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      console.error('JWT verification error:', err);
+      req.user = null;
+    } else {
+      console.log('JWT decoded user:', user);
+      req.user = user;
+    }
+    next();
+  });
+};
+
+app.use(authenticateToken);
+
 // ---------------------- HEALTH CHECK ---------------------- //
 
 app.get('/api/health', (req, res) => {
@@ -257,9 +284,88 @@ app.get('/api/groups', async (req, res) => {
   }
 });
 
+// NEW: Settlement endpoint
+// index.js
+
+// ---------------------- Other routes remain the same ---------------------- //
+
+// NEW: Settlement endpoint (Corrected Logic)
+app.post('/api/groups/:groupId/settle', async (req, res) => {
+  try {
+    const groupId = parseInt(req.params.groupId);
+    const { fromUserId, toUserId, amount } = req.body;
+
+    if (!fromUserId || !toUserId || !amount || amount <= 0) {
+      return res.status(400).json({ error: 'fromUserId, toUserId, and a positive amount are required.' });
+    }
+
+    // Verify the group exists and get current state
+    const group = await prisma.group.findUnique({
+      where: { id: groupId },
+      include: { 
+        members: { include: { user: true } }, 
+      }
+    });
+
+    if (!group) {
+      return res.status(404).json({ error: 'Group not found.' });
+    }
+
+    // Verify both users are members of the group
+    const fromMember = group.members.find(m => m.user.id === parseInt(fromUserId));
+    const toMember = group.members.find(m => m.user.id === parseInt(toUserId));
+
+    if (!fromMember || !toMember) {
+      return res.status(400).json({ error: 'Both users must be members of this group.' });
+    }
+
+    const settlementAmount = parseFloat(amount);
+    const fromId = parseInt(fromUserId);
+    const toId = parseInt(toUserId);
+
+    // Use a transaction to create two offsetting expenses to represent the settlement
+    const [settlementOut, settlementIn] = await prisma.$transaction([
+      // 1. The user who OWES makes a positive payment into the group expense pool
+      prisma.expense.create({
+        data: {
+          description: `Settlement to ${toMember.user.name}`,
+          amount: settlementAmount,
+          paidById: fromId,
+          groupId: groupId,
+        }
+      }),
+      // 2. The user who IS OWED receives that payment, represented as a negative expense
+      prisma.expense.create({
+        data: {
+          description: `Settlement from ${fromMember.user.name}`,
+          amount: -settlementAmount,
+          paidById: toId,
+          groupId: groupId,
+        }
+      })
+    ]);
+
+    res.json({ 
+      message: 'Settlement recorded successfully',
+      settlement: { out: settlementOut, in: settlementIn }
+    });
+  } catch (error) {
+    console.error('Settlement error:', error);
+    res.status(400).json({ error: 'Failed to record settlement.' });
+  }
+});
+
+// ---------------------- Other routes remain the same ---------------------- //
+
 app.get('/api/groups/:groupId/summary', async (req, res) => {
   try {
     const groupId = parseInt(req.params.groupId);
+    
+    // Debug logging
+    console.log('Summary request for group:', groupId);
+    console.log('Request user from JWT:', req.user);
+    console.log('Authorization header:', req.headers.authorization);
+    
     const group = await prisma.group.findUnique({
       where: { id: groupId },
       include: { members: { include: { user: true } }, expenses: true },
@@ -313,11 +419,21 @@ app.get('/api/groups/:groupId/summary', async (req, res) => {
       const amount = Math.min(Math.abs(debtor.balance), creditor.balance);
       
       if (amount > 0.01) { // Only process if amount is significant
-        transactions.push({ 
+        // Enhanced transaction object with user IDs and settlement capability
+        const canSettle = req.user ? req.user.sub === debtor.id : false;
+        console.log(`Transaction ${debtor.name} → ${creditor.name}: debtor.id=${debtor.id}, req.user.sub=${req.user?.sub}, canSettle=${canSettle}`);
+        
+        const transaction = { 
           from: debtor.name, 
           to: creditor.name, 
-          amount: +amount.toFixed(2) 
-        });
+          amount: +amount.toFixed(2),
+          fromUserId: debtor.id,
+          toUserId: creditor.id,
+          // Check if current user (from JWT) can settle this transaction
+          canSettle: canSettle
+        };
+        
+        transactions.push(transaction);
         
         debtor.balance += amount;
         creditor.balance -= amount;
